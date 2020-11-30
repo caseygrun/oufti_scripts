@@ -1,0 +1,3 @@
+*.m~
+*.DS_Store
+example_data/example_output/**
