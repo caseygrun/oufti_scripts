@@ -37,12 +37,15 @@ p.FunctionName = st.name;
 p.StructExpand = false;
 
 addParameter(p,'DatFilePattern',  '^(?<image>.*)-GFP-(?<frame>\d+)\.dat');
+addParameter(p,'CsvFilePattern',  '');
+
 addParameter(p,'TrainingSetIndices', []);
 addParameter(p,'TestSetIndices', []);
 
 parse(p,varargin{:})
 args = p.Results;
 DAT_FILE_PATTERN = args.DatFilePattern;
+CSV_FILE_PATTERN = args.CsvFilePattern;
 trainingsetinds = args.TrainingSetIndices;
 testsetinds = args.TestSetIndices;
 
@@ -68,22 +71,49 @@ function [mfi, tvec] = load_control_data(directories)
     tvec = {};
     for colony=1:length(directories)
         directory = directories{colony};
-        dirobj = dir(fullfile(directory,'*.dat'));
         fnames = {};
-        [fnames{1:length(dirobj)}]=dirobj(:).name;
-
-        % for each timepoint
-        for t=1:length(dirobj)
-            %load .dat file
-            filename = fullfile(directory, fnames{t});
-            file_name_parts = regexp(fnames{t}, DAT_FILE_PATTERN, 'names');
-            if (isempty(file_name_parts))
-                fprintf('Skipping .dat file "%s" which does not fit the expected naming pattern\n', fnames{t})
-                continue
+        
+        if ~isempty(CSV_FILE_PATTERN)
+            dirobj = dir(fullfile(directory,'**','*.csv'));
+            [fnames{1:length(dirobj)}]=dirobj(:).name;
+            
+            % for each csv file
+            for ii=1:length(dirobj)
+                %load .csv file
+                filename = fullfile(directory, fnames{t});
+                file_name_parts = regexp(fnames{t}, CSV_FILE_PATTERN, 'names');
+                if (isempty(file_name_parts))
+                    fprintf('Skipping .csv file "%s" which does not fit the expected naming pattern\n', fnames{t})
+                    continue
+                end
+                data = load(filename);
+                
+                timepoints = unique(data.tframe);
+                
+                for t = 1:length(timepoints)
+                    mfi{t,colony} = [mfi{t,colony} data.MFI_GFP(data.tframe == t)];
+                    tvec{t,colony} = [tvec{t,colony} timepoints(t)]; %str2num((filename((max(find(filename=='_'))+2):(max(find(filename=='.'))-1)))); 
+                end
             end
+                
+        else
 
-            mfi{t,colony} = load(filename);
-            tvec{t,colony} = str2double(file_name_parts.frame); %str2num((filename((max(find(filename=='_'))+2):(max(find(filename=='.'))-1))));
+            dirobj = dir(fullfile(directory,'**','*.dat'));
+            [fnames{1:length(dirobj)}]=dirobj(:).name;
+
+            % for each timepoint
+            for t=1:length(dirobj)
+                %load .dat file
+                filename = fullfile(directory, fnames{t});
+                file_name_parts = regexp(fnames{t}, DAT_FILE_PATTERN, 'names');
+                if (isempty(file_name_parts))
+                    fprintf('Skipping .dat file "%s" which does not fit the expected naming pattern\n', fnames{t})
+                    continue
+                end
+
+                mfi{t,colony} = load(filename);
+                tvec{t,colony} = str2double(file_name_parts.frame); %str2num((filename((max(find(filename=='_'))+2):(max(find(filename=='.'))-1))));
+            end
         end
     end 
 end
