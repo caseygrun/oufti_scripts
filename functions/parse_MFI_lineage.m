@@ -128,31 +128,6 @@ numfiles=length(matfileobj);
 
 outputs = cell(numfiles, 2);
 
-
-
-function bactmask = make_cell_mask(meshcoord, img)
-    % convert an oufti cell mesh into a binary mask of img, with pixels
-    % involving the cell set to 1 and other pixels to 0
-    
-    % generate a mask identifying this cell, from its mesh
-    borders=[flip(meshcoord(:,4)) flip(meshcoord(:,3)); meshcoord(:,2) meshcoord(:,1)];
-
-    % remove points containing +/-infinity
-    infrows = find(ismember(abs(borders),[Inf Inf],'rows')==1);
-
-    if isempty(infrows)==0
-        borders(infrows,:)=[];
-    end
-
-    % create mask identifing the position of this cell
-    bactmask=poly2mask(...
-        (double(borders(:,2))),...
-        (double(borders(:,1))),...
-        size(img,1),...
-        size(img,2));
-end
-
-
 % loop through colony files
 for fnum=1:numfiles
     
@@ -209,6 +184,7 @@ for fnum=1:numfiles
         
         % Load CellIDs and segmentation mesh data.
         numcells=max(cell2mat(allIDlist(~cellfun('isempty',allIDlist))));
+        
         cellIDs=cellList.cellId{t};
         meshinfo=cellList.meshData{t};
         
@@ -261,18 +237,22 @@ for fnum=1:numfiles
         % calculate the background for each channel
         for ii = 1:length(channels)
             
-            % create an image with the background for this channel subtracted. 
-            backimgs{ii} = regionfill(imgs{ii}, imcomplement(wholemaskBWbin));
-            backimgs{ii} = imdilate(backimgs{ii},strel('disk',10));
-            backimgs{ii} = imgs{ii} - backimgs{ii};
-            
             % get an image of this channel masked to remove all the cells
             % (all pixels containing a cell are set to 0)
             backmask=imcomplement(wholemaskBWbin).*imgs{ii};
-            
+
             % get the mean fluorescence of pixels that do not contain a
             % cell, and subtract that from the MFI
             backvals{ii} = mean(imgs{ii}(backmask>0));
+            
+            if strcmp(BACKGROUND_METHOD,'local')
+                
+                % create an image with the background for this channel subtracted. 
+                backimgs{ii} = regionfill(imgs{ii}, wholemaskBWbin);
+                backimgs{ii} = imdilate(backimgs{ii},strel('disk',10));
+                backimgs{ii} = imgs{ii} - backimgs{ii};
+
+            end
         end
 
         % subtract background fluorescence values for each channel
@@ -296,7 +276,6 @@ for fnum=1:numfiles
 
                         % get the mean fluorescence of pixels that do not contain a
                         % cell, and subtract that from the MFI
-                        backval = mean(imgs{ii}(backmask>0));
                         frame_MFIs{ii} = frame_MFIs{ii} - backvals{ii};
                         MFIs{ii}{t} = frame_MFIs{ii};
                     
