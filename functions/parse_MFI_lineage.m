@@ -55,7 +55,21 @@ function [outputs] = parse_MFI_lineage(directory, output_directory, varargin)
 %    'FramesToExport'    which frames do you want to export? if this set to the empty array `[]`, all frames
 %                        with 1+ cells will be exported. Note: the `Last_Ancestor` column in the CSV
 %                        file may refer to cells birthed on frames outside this range. 
-% 
+%  'BackgroundMethod'    This function will, by default, subtract background
+%                        fluorescence for each frame of each channel. There
+%                        are several methods for doing this:
+%                          - 'mean' calculates the mean intensity of every
+%                            non-cell pixel in the frame, and subtracts
+%                            this value from the MFI of each cell in the
+%                            frame. 
+%                          - 'local' generates a smoothed background image
+%                            where all cells are replaced by nearby
+%                            background. This image is then subtracted
+%                            pixelwise from the original image and MFIs are
+%                            calculated for each cell from this subtracted
+%                            image. This method works better for images that
+%                            are unevenly illuminated. 
+%                          - 'none'
 %   Returns an Nx2 cell array `outputs`, where N = number of .MAT files.
 %       outputs{i, 1} is the image base name; for example, for mesh file i named 'Ph-some_long_experiment_name.mat', 
 %                     `outputs{i, 1} = 'some_long_experiment_name'`
@@ -82,6 +96,7 @@ addParameter(p,'TifFilePattern', '%{channel}s-%{image}s.tif');
 addParameter(p,'CSVFilePattern', '%{image}s.csv')
 addParameter(p,'DatFilePattern', '%{image}s-%{channel}s-%{frame}d.dat')
 addParameter(p,'FramesToExport', []);
+addParameter(p,'BackgroundMethod', 'mean');
 
 parse(p,varargin{:})
 args = p.Results;
@@ -91,6 +106,7 @@ DAT_FILE_PATTERN = args.DatFilePattern;
 MAT_FILE_PATTERN = args.MatFilePattern;
 TIF_FILE_PATTERN = args.TifFilePattern;
 frames_to_export = args.FramesToExport;
+BACKGROUND_METHOD = args.BackgroundMethod;
 
 
 % replace human-readable {placeholder} names with positional placeholders
@@ -111,6 +127,31 @@ matfileobj=dir(fullfile(directory, '*.mat'));
 numfiles=length(matfileobj);
 
 outputs = cell(numfiles, 2);
+
+
+
+function bactmask = make_cell_mask(meshcoord, img)
+    % convert an oufti cell mesh into a binary mask of img, with pixels
+    % involving the cell set to 1 and other pixels to 0
+    
+    % generate a mask identifying this cell, from its mesh
+    borders=[flip(meshcoord(:,4)) flip(meshcoord(:,3)); meshcoord(:,2) meshcoord(:,1)];
+
+    % remove points containing +/-infinity
+    infrows = find(ismember(abs(borders),[Inf Inf],'rows')==1);
+
+    if isempty(infrows)==0
+        borders(infrows,:)=[];
+    end
+
+    % create mask identifing the position of this cell
+    bactmask=poly2mask(...
+        (double(borders(:,2))),...
+        (double(borders(:,1))),...
+        size(img,1),...
+        size(img,2));
+end
+
 
 % loop through colony files
 for fnum=1:numfiles
@@ -187,35 +228,14 @@ for fnum=1:numfiles
         ancestorlist = zeros(1,cellListN(tframes(t)));
         leafstatus = zeros(1,cellListN(tframes(t)));
         
-        % for each cell
+        % first, generate a masked image identifying which pixels are
+        % occupied by cells; this will be used to calculate the background
         for cellnum = 1:cellListN(tframes(t))
             meshcoord = meshinfo{cellnum}.mesh;
-            if meshcoord == 0
-                
-            else
+            if meshcoord ~= 0
                 
                 % generate a mask identifying this cell, from its mesh
-                borders=[flip(meshcoord(:,4)) flip(meshcoord(:,3)); meshcoord(:,2) meshcoord(:,1)];
-                
-                % remove points containing +/-infinity
-                infrows = find(ismember(abs(borders),[Inf Inf],'rows')==1);
-                
-                if isempty(infrows)==0
-                    borders(infrows,:)=[];
-                end
-                
-                % create mask identifing the position of this cell
-                bactmask=poly2mask(...
-                    (double(borders(:,2))),...
-                    (double(borders(:,1))),...
-                    size(imgs{1},1),...
-                    size(imgs{1},2));
-                
-                % for each channel, mask the channel image to only include
-                % this cell, then take the mean value (MFI)
-                for ii = 1:length(channels)
-                    frame_MFIs{ii}(cellnum) = mean(imgs{ii}(bactmask==1));
-                end
+                bactmask = make_cell_mask(meshcoord, imgs{1});
 
                 % keep track of which cell occupies this pixel
                 wholemask = wholemask + cellnum * bactmask;
@@ -238,17 +258,59 @@ for fnum=1:numfiles
         % cell, otherwise 0
         wholemaskBWbin=imdilate(wholemask>0,strel('disk',10));
         
-        % subtract background fluorescence values for each channel
+        % calculate the background for each channel
         for ii = 1:length(channels)
+            
+            % create an image with the background for this channel subtracted. 
+            backimgs{ii} = regionfill(imgs{ii}, imcomplement(wholemaskBWbin));
+            backimgs{ii} = imdilate(backimgs{ii},strel('disk',10));
+            backimgs{ii} = imgs{ii} - backimgs{ii};
+            
             % get an image of this channel masked to remove all the cells
             % (all pixels containing a cell are set to 0)
             backmask=imcomplement(wholemaskBWbin).*imgs{ii};
             
             % get the mean fluorescence of pixels that do not contain a
             % cell, and subtract that from the MFI
-            backval = mean(imgs{ii}(backmask>0));
-            frame_MFIs{ii} = frame_MFIs{ii} - backval;
-            MFIs{ii}{t} = frame_MFIs{ii};
+            backvals{ii} = mean(imgs{ii}(backmask>0));
+        end
+
+        % subtract background fluorescence values for each channel
+        for cellnum = 1:cellListN(tframes(t))
+            meshcoord = meshinfo{cellnum}.mesh;
+            if meshcoord ~= 0
+                
+                % generate a mask identifying this cell, from its mesh
+                bactmask = make_cell_mask(meshcoord, imgs{1});
+                
+                
+                % subtract background fluorescence values for each channel
+                for ii = 1:length(channels)
+                    
+                    % for method `mean`, take the mean of all pixels
+                    % that don't contain a cell and subtract that single
+                    % value from every cell.
+                    if strcmp(BACKGROUND_METHOD,'mean')
+                    
+                        frame_MFIs{ii}(cellnum) = mean(imgs{ii}(bactmask==1));
+
+                        % get the mean fluorescence of pixels that do not contain a
+                        % cell, and subtract that from the MFI
+                        backval = mean(imgs{ii}(backmask>0));
+                        frame_MFIs{ii} = frame_MFIs{ii} - backvals{ii};
+                        MFIs{ii}{t} = frame_MFIs{ii};
+                    
+                    % for method `local`, compute a background image where 
+                    % all cells are removed and filled with nearby
+                    % background pixels; smooth that image, then
+                    % subtract it pixelwise from the original image. Now
+                    % take the MFI of each cell as usual. 
+                    elseif strcmp(BACKGROUND_METHOD,'local')
+                        frame_MFIs{ii}(cellnum) = mean(backimgs{ii}(bactmask==1));
+                        MFIs{ii}{t} = frame_MFIs{ii};
+                    end
+                end
+            end
         end
 
 %         backval=mean(img(backmask>0));
