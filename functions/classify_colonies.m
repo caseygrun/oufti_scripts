@@ -19,8 +19,11 @@ function [onoff, fon] = classify_colonies(directory, classinfo, tframes, varargi
 %     'ShowPlots' : true to show some summary plots (default true)
 %
 % Returns:
-%     ONOFF : NxMx2 matrix, where ONOFF(i,j,1) is the number of OFF cells in
-%     colony i, timepoint j, and ONOFF(i,j,2) is the number of ON cells
+%     ONOFF : NxMx2 matrix, where ONOFF(i,j,1) is the number of OFF cells 
+%             in colony i, timepoint j, and ONOFF(i,j,2) is the number of 
+%             ON cells
+%       FON : NxM matrix, where FON(i,j) is the fraction of ON cells in
+%             colony i, timepoint j
 
 p = inputParser;
 st = dbstack;
