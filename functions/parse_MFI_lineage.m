@@ -49,7 +49,7 @@ function [outputs] = parse_MFI_lineage(directory, output_directory, varargin)
 %                        How do you want your .DAT file(s) named? should be a format string
 %                        suitable for `sprintf` with placeholders: `%{image}s` for the base 
 %                        image name, %{channel} is the channel, and `%{frame}` will be the frame
-%                        number. 
+%                        number. Set this to '' to not export .DAT files
 %                        Default: '%{image}s-%{channel}s-%{frame}d.csv'
 %     
 %    'FramesToExport'    which frames do you want to export? if this set to the empty array `[]`, all frames
@@ -128,6 +128,7 @@ numfiles=length(matfileobj);
 
 outputs = cell(numfiles, 2);
 
+
 % loop through colony files
 for fnum=1:numfiles
     
@@ -174,19 +175,21 @@ for fnum=1:numfiles
     
     % for each frame
     for t = 1:length(tframes)
+        frame = tframes(t);
+        
         imgs = cellfun(@(channel_image_file) ...
-            double(imread(channel_image_file,tframes(t))), ...
+            double(imread(channel_image_file,frame)), ...
             imgfilenames, 'UniformOutput', false); 
         
-%         img=double(imread(imgfilename,tframes(t)));
-%         rfpimg=double(imread(rfpfilename,tframes(t)));
+%         img=double(imread(imgfilename,frame));
+%         rfpimg=double(imread(rfpfilename,frame));
         allIDlist=cellList.cellId;
         
         % Load CellIDs and segmentation mesh data.
         numcells=max(cell2mat(allIDlist(~cellfun('isempty',allIDlist))));
         
-        cellIDs=cellList.cellId{t};
-        meshinfo=cellList.meshData{t};
+        cellIDs=cellList.cellId{frame};
+        meshinfo=cellList.meshData{frame};
         
         % this mask will keep track of which cell occupies each pixel in
         % the image; wholemask(i, j) = cell ID of the cell at pixel (i, j),
@@ -195,18 +198,18 @@ for fnum=1:numfiles
         
         % cell array to hold MFIs for each channel
         % frame_MFIs{ii} is a 1 x (# of cells in frame) matrix
-        frame_MFIs = cellfun(@(~) zeros(1,cellListN(tframes(t))), channels, ...
+        frame_MFIs = cellfun(@(~) zeros(1,cellListN(frame)), channels, ...
             'UniformOutput', false);
-%         gfpmfi=zeros(1,cellListN(tframes(t)));
-%         rfpmfi=zeros(1,cellListN(tframes(t)));
+%         gfpmfi=zeros(1,cellListN(frame));
+%         rfpmfi=zeros(1,cellListN(frame));
 
         % setup matrices to capture linage data
-        ancestorlist = zeros(1,cellListN(tframes(t)));
-        leafstatus = zeros(1,cellListN(tframes(t)));
+        ancestorlist = zeros(1,cellListN(frame));
+        leafstatus = zeros(1,cellListN(frame));
         
         % first, generate a masked image identifying which pixels are
         % occupied by cells; this will be used to calculate the background
-        for cellnum = 1:cellListN(tframes(t))
+        for cellnum = 1:cellListN(frame)
             meshcoord = meshinfo{cellnum}.mesh;
             if meshcoord ~= 0
                 
@@ -256,7 +259,7 @@ for fnum=1:numfiles
         end
 
         % subtract background fluorescence values for each channel
-        for cellnum = 1:cellListN(tframes(t))
+        for cellnum = 1:cellListN(frame)
             meshcoord = meshinfo{cellnum}.mesh;
             if meshcoord ~= 0
                 
@@ -271,12 +274,10 @@ for fnum=1:numfiles
                     % that don't contain a cell and subtract that single
                     % value from every cell.
                     if strcmp(BACKGROUND_METHOD,'mean')
-                    
-                        frame_MFIs{ii}(cellnum) = mean(imgs{ii}(bactmask==1));
-
+                        
                         % get the mean fluorescence of pixels that do not contain a
                         % cell, and subtract that from the MFI
-                        frame_MFIs{ii} = frame_MFIs{ii} - backvals{ii};
+                        frame_MFIs{ii}(cellnum) = mean(imgs{ii}(bactmask==1)) - backvals{ii};
                         MFIs{ii}{t} = frame_MFIs{ii};
                     
                     % for method `local`, compute a background image where 
@@ -303,9 +304,9 @@ for fnum=1:numfiles
 %         rfpmficell{t}=rfpmfi;
 
         % record lineage data
-        celllists{t}=double([cellList.cellId{tframes(t)}]);
+        celllists{t}=double([cellList.cellId{frame}]);
         ancestorscell{t}=ancestorlist;
-        timelabels{t}=tframes(t)*ones(size(frame_MFIs{ii}));
+        timelabels{t}=frame*ones(size(frame_MFIs{ii}));
     end
     
     % Define nodes for lineage tree
@@ -347,7 +348,7 @@ for fnum=1:numfiles
 
     % optionally, output a `.dat` file for each frame, containing only the 
     % MFI data
-    if DAT_FILE_PATTERN
+    if ~isempty(DAT_FILE_PATTERN)
         for ii = 1:length(channels)
             channel = channels{ii};
             channel_MFIs = MFIs{ii};
